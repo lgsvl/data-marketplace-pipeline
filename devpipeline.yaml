@@ -1,0 +1,584 @@
+resource_types:
+- name: kubernetes
+  type: docker-image
+  source:
+    repository: zlabjp/kubernetes-resource
+    tag: "1.14"
+
+- name: kube-fabric
+  type: docker-image
+  source:
+    repository: lgsvl/kube-fabric
+    tag: latest
+
+resources:
+- name: data-storage-delivery
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-storage-delivery.git
+    branch: dev
+
+
+- name: data-stream-delivery
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-stream-delivery.git
+    branch: dev
+
+
+- name: data-marketplace-chaincode
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-chaincode.git
+    branch: dev
+  
+
+- name: chaincode-rest
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-chaincode-rest.git
+    branch: dev
+  
+
+
+- name: data-marketplace-facade
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-facade.git
+    branch: dev
+  
+
+- name: portal
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-portal-opensource.git
+    branch: dev
+  
+
+    
+
+- name: esearchFeeder
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-esearchFeeder.git
+    branch: dev
+  
+
+- name: fabric-tools-deployment
+  type: git
+  source:
+    uri: git@github.com:lgsvl/data-marketplace-deployment.git
+    branch: dev
+    paths: [./fabric-tools-deployment-org1.yaml,./fabric-tools-deployment-org2.yaml] # you can add other orgs to make the update in parallel
+  
+
+- name: kubeconfig-deployment #This should contain your kubeconfig file to allow the pipeline to deploy on your behalf
+  type: git
+  source:
+    uri: git@github.com:lgsvl/deployment.git
+    branch: master
+    paths: [./kubeconfig/config]
+  
+
+
+- name: kubernetes-resource
+  type: kubernetes
+  source:
+    use_aws_iam_authenticator: true
+    kubeconfig: |
+       apiVersion: v1
+       clusters:
+       - cluster:
+           certificate-authority-data: ((ca_data))
+           server: ((kubeapi_server))
+         name: ((clustername))
+       contexts:
+       - context:
+           cluster: ((clustername))
+           user: ((user))
+         name: ((contextname))
+       current-context: ((contextname))
+       kind: Config
+       preferences: {}
+       users:
+       - name: ((contextname))
+         user:
+           exec:
+             apiVersion: client.authentication.k8s.io/v1alpha1
+             args:
+             - token
+             - -i
+             - ((clustername))
+             - -r
+             - ((role arn)) #in case you are using aws
+             command: aws-iam-authenticator # in case you are using aws eks
+    context: ((clustername))
+    aws_eks_cluster_name: momotest
+    namespace: default
+
+- name: kube-fabric-resource
+  type: kube-fabric
+  source:
+    use_aws_iam_authenticator: true
+    kubeconfig: |
+       apiVersion: v1
+       clusters:
+       - cluster:
+           certificate-authority-data: ((ca_data))
+           server: ((kubeapi-server))
+         name: ((clustername))
+       contexts:
+       - context:
+           cluster: ((clustername))
+           user: ((clustername))
+         name: ((clustername))
+       current-context: ((clustername))
+       kind: Config
+       preferences: {}
+       users:
+       - name: ((clustername))
+         user:
+           exec:
+             apiVersion: client.authentication.k8s.io/v1alpha1
+             args:
+             - token
+             - -i
+             - momotest
+             - -r
+             - ((role arn)) #in case you are using aws
+             command: aws-iam-authenticator # in case you are using aws eks
+    context: ((clustername))
+    aws_eks_cluster_name: ((clustername))
+    namespace: dev
+
+- name: version
+  type: semver
+  source:
+    driver: git
+    uri: git@github.com:lgsvl/data-marketplace-chaincode.git
+    branch: version-dev
+    file: VERSION
+  
+
+- name: data-storage-delivery-docker-image
+  type: docker-image
+  source:
+     repository: lgsvl/data-marketplace-storage-delivery
+     tag: dev
+
+
+- name: data-stream-delivery-docker-image
+  type: docker-image
+  source:
+     repository: lgsvl/data-marketplace-stream-delivery
+     tag: dev
+    
+
+- name: chaincode-rest-docker-image
+  type: docker-image
+  source:
+     repository: lgsvl/data-marketplace-chaincode-rest
+     tag: dev
+    
+
+
+- name: data-marketplace-facade-docker-image
+  type: docker-image
+  source:
+     repository: lgsvl/data-marketplace-facade
+     tag: dev
+    
+
+- name: esearchFeeder-docker-image
+  type: docker-image
+  source:
+     repository: lgsvl/data-marketplace-esearchfeeder
+     tag: dev
+    
+
+
+- name: portal-docker-image
+  type: docker-image
+  source:
+     repository: lgsvl/data-marketplace-portal
+     tag: dev
+    
+
+jobs:
+- name: build-data-storage-delivery-docker-image
+  public: true
+  serial: true
+  plan:
+  - get: data-storage-delivery
+    trigger: true
+  - put: data-storage-delivery-docker-image
+    params:
+      build: data-storage-delivery
+
+- name: deploy-data-storage-delivery
+  plan:
+  - get: data-storage-delivery
+  - get: kubeconfig-deployment
+  - get: data-storage-delivery-docker-image
+    trigger: true
+    passed: [build-data-storage-delivery-docker-image]
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f data-storage-delivery/deployment/data-storage-delivery-dev-deployment.yaml -n dev
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f data-storage-delivery/deployment/data-storage-delivery-dev-deployment.yaml -n dev
+      wait_until_ready_selector: app=data-storage-delivery
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+
+- name: run-units-for-data-stream-delivery
+  public: true
+  plan:
+  - get: data-stream-delivery
+    trigger: true
+  - task: unit-tests
+    file: data-stream-delivery/ci/unit_tests.yaml
+
+
+- name: build-data-stream-delivery-docker-image
+  public: true
+  serial: true
+  plan:
+  - get: data-stream-delivery
+    trigger: true
+    passed: [run-units-for-data-stream-delivery]
+  - put: data-stream-delivery-docker-image
+    params:
+      build: data-stream-delivery
+
+
+- name: deploy-data-stream-delivery
+  plan:
+  - get: data-stream-delivery
+  - get: kubeconfig-deployment
+  - get: data-stream-delivery-docker-image
+    trigger: true
+    passed: [build-data-stream-delivery-docker-image]
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f data-stream-delivery/deployment/data-stream-delivery-dev-deployment.yaml -n dev
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f data-stream-delivery/deployment/data-stream-delivery-dev-deployment.yaml -n dev
+      wait_until_ready_selector: app=data-stream-delivery
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+- name: run-units-for-esearchFeeder
+  public: true
+  plan:
+  - get: esearchFeeder
+    trigger: true
+  - task: unit-tests
+    file: esearchFeeder/ci/unit_tests.yaml
+
+
+- name: build-esearchFeeder-docker-image
+  public: true
+  serial: true
+  plan:
+  - get: esearchFeeder
+    trigger: true
+    passed: [run-units-for-esearchFeeder]
+  - put: esearchFeeder-docker-image
+    params:
+      build: esearchFeeder
+
+
+- name: deploy-esearchFeeder
+  plan:
+  - get: esearchFeeder
+  - get: kubeconfig-deployment
+  - get: esearchFeeder-docker-image
+    trigger: true
+    passed: [build-esearchFeeder-docker-image]
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f esearchFeeder/deployment/esFeeder-dev-deployment.yaml -n dev
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f esearchFeeder/deployment/esFeeder-dev-deployment.yaml -n dev
+      wait_until_ready_selector: app=esearchfeeder-deployment
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+- name: run-units-for-chaincode-rest
+  public: true
+  plan:
+  - get: chaincode-rest
+    trigger: true
+  - task: unit-tests
+    file: chaincode-rest/ci/unit_tests.yaml
+
+
+- name: build-chaincode-rest-docker-image
+  public: true
+  serial: true
+  plan:
+  - get: chaincode-rest
+    trigger: true
+    passed: [run-units-for-chaincode-rest]
+  - put: chaincode-rest-docker-image
+    params:
+      build: chaincode-rest
+
+
+- name: deploy-chaincode-rest
+  plan:
+  - get: chaincode-rest
+  - get: kubeconfig-deployment
+  - get: chaincode-rest-docker-image
+    trigger: true
+    passed: [build-chaincode-rest-docker-image]
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f chaincode-rest/deployment/chaincode-rest-dev-deployment.yaml -n dev
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f chaincode-rest/deployment/chaincode-rest-dev-deployment.yaml -n dev
+      wait_until_ready_selector: app=chaincode-rest
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+
+
+
+- name: build-data-marketplace-facade-docker-image
+  public: true
+  serial: true
+  plan:
+  - get: data-marketplace-facade
+    trigger: true
+  - put: data-marketplace-facade-docker-image
+    params:
+      build: data-marketplace-facade
+
+- name: deploy-data-marketplace-facade
+  plan:
+  - get: data-marketplace-facade
+  - get: kubeconfig-deployment
+  - get: data-marketplace-facade-docker-image
+    trigger: true
+    passed: [build-data-marketplace-facade-docker-image]
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f data-marketplace-facade/deployment/data-marketplace-facade-dev-deployment.yaml -n dev
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f data-marketplace-facade/deployment/data-marketplace-facade-dev-deployment.yaml -n dev
+      wait_until_ready_selector: app=data-marketplace-facade-deployment
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+
+
+- name: build-portal-docker-image
+  public: true
+  serial: true
+  plan:
+  - get: portal
+    trigger: true
+  - put: portal-docker-image
+    params:
+      build: portal
+
+- name: deploy-portal
+  plan:
+  - get: portal
+  - get: kubeconfig-deployment
+  - get: portal-docker-image
+    trigger: true
+    passed: [build-portal-docker-image]
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f portal/deployment/portal-dev-deployment.yaml -n dev
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f portal/deployment/portal-dev-deployment.yaml -n dev
+      wait_until_ready_selector: app=portal
+      wait_until_ready: 50
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+- name: run-units-for-chaincode
+  public: true
+  plan:
+  - get: data-marketplace-chaincode
+    trigger: true
+  - task: unit-tests
+    file: data-marketplace-chaincode/ci/unit_tests.yaml
+# bump version
+- name: bump-version
+  public: true
+  plan:
+  - get: data-marketplace-chaincode
+    trigger: true
+    passed: [run-units-for-chaincode]
+  - put: version
+    params: {bump: patch}
+
+#upgrade chaincode job org1
+- name: upgrade-chaincode-org1
+  plan:
+  - get: data-marketplace-chaincode
+    passed: [run-units-for-chaincode]
+  - get: fabric-tools-deployment
+    trigger: false
+  - get: kubeconfig-deployment
+    trigger: false
+  - get: version
+    passed: [bump-version]
+    trigger: true
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f fabric-tools-deployment/fabric-tools-deployment-org1.yaml
+      wait_until_ready_selector: app=fabric-tools-org1
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: exec fabric-tools-org1 -- mkdir -p /opt/gopath/src/github.com/lgsvl/
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+  # copy chaincode to fabric-tools
+  - put: kube-fabric-resource
+    params:
+      kubectl: cp data-marketplace-chaincode fabric-tools-org1:/opt/gopath/src/github.com/lgsvl/
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+      branch: dev
+    
+      do_pull: "true"
+
+# peer install
+  - put: kube-fabric-resource
+    params:
+      kubectl: exec fabric-tools-org1 -- peer chaincode install -n ${CHAINCODE_NAME} -v ${CHAINCODE_VERSION} -p ${CHAINCODE_PATH}
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+      branch: dev
+      chaincode_name: dmp
+      channel_name: dmp
+      chaincode_path: github.com/lgsvl/data-marketplace-chaincode/
+    
+      core_peer_address: blockchain-org1peer1:30110
+      do_pull: "false"
+# peer upgrade
+  - put: kube-fabric-resource
+    params:
+      kubectl: exec fabric-tools-org1 -- peer chaincode upgrade -o ${ORDERER_URL} -C ${CHANNEL_NAME} -n ${CHAINCODE_NAME} -v ${CHAINCODE_VERSION} -p ${CHAINCODE_PATH} -c '{"Args":["init","dmpoken","10000"]}'
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+      branch: dev
+      chaincode_name: dmp
+      channel_name: dmp
+      orderer_url: blockchain-orderer:31010
+      chaincode_path: github.com/lgsvl/data-marketplace-chaincode/
+    
+      core_peer_address: blockchain-org1peer1:30110
+      do_pull: "false"
+
+# delete fabric-tools
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f fabric-tools-deployment/fabric-tools-deployment-org1.yaml
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+
+
+
+#upgrade chaincode job org2
+- name: upgrade-chaincode-org2
+  plan:
+  - get: data-marketplace-chaincode
+    trigger: false
+    passed: [run-units-for-chaincode]
+  - get: fabric-tools-deployment
+    trigger: false
+  - get: kubeconfig-deployment
+    trigger: false
+  - get: version
+    passed: [bump-version]
+    trigger: true
+  - put: kubernetes-resource
+    params:
+      kubectl: apply -f fabric-tools-deployment/fabric-tools-deployment-org2.yaml
+      wait_until_ready_selector: app=fabric-tools-org2
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  - put: kubernetes-resource
+    params:
+      kubectl: exec fabric-tools-org2 -- mkdir -p /opt/gopath/src/github.com/lgsvl/
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+  # copy chaincode to fabric-tools
+  - put: kube-fabric-resource
+    params:
+      kubectl: cp data-marketplace-chaincode fabric-tools-org2:/opt/gopath/src/github.com/lgsvl/
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+      branch: dev
+    
+      do_pull: "true"
+# peer install
+  - put: kube-fabric-resource
+    params:
+      kubectl: exec fabric-tools-org2 -- peer chaincode install -n ${CHAINCODE_NAME} -v ${CHAINCODE_VERSION} -p ${CHAINCODE_PATH}
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+      branch: dev
+      chaincode_name: dmp
+      channel_name: dmp
+      chaincode_path: github.com/lgsvl/data-marketplace-chaincode/
+    
+      core_peer_address: blockchain-org2peer1:30110
+      do_pull: "false"
+# peer upgrade
+  - put: kube-fabric-resource
+    params:
+      kubectl: exec fabric-tools-org2 -- peer chaincode upgrade -o ${ORDERER_URL} -C ${CHANNEL_NAME} -n ${CHAINCODE_NAME} -v ${CHAINCODE_VERSION} -p ${CHAINCODE_PATH} -c '{"Args":["init","dmpoken","10000"]}'
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
+      branch: dev
+      chaincode_name: dmp
+      channel_name: dmp
+      orderer_url: blockchain-orderer:31010
+      chaincode_path: github.com/lgsvl/data-marketplace-chaincode/
+    
+      core_peer_address: blockchain-org2peer1:30110
+      do_pull: "false"
+
+# delete fabric-tools org2
+  - put: kubernetes-resource
+    params:
+      kubectl: delete -f fabric-tools-deployment/fabric-tools-deployment-org2.yaml
+      wait_until_ready: 0
+      kubeconfig_file: kubeconfig-deployment/kubeconfig/config
+      namespace: dev
